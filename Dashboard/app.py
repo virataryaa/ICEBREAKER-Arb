@@ -96,14 +96,24 @@ def base_layout(fig, **kw):
 
 @st.cache_data(ttl=3600)
 def load_all():
-    kc  = pd.read_parquet(DB / "arb_KC.parquet")["rollex_px"].rename("KC")
-    rc  = pd.read_parquet(DB / "arb_RC.parquet")["rollex_px"].rename("RC")
-    cc  = pd.read_parquet(DB / "arb_CC.parquet")["rollex_px"].rename("CC")
-    lcc = pd.read_parquet(DB / "arb_LCC.parquet")["rollex_px"].rename("LCC")
-    gbp = pd.read_parquet(DB / "fx_gbp.parquet")["GBP_USD"]
-    return kc, rc, cc, lcc, gbp
+    # Roll-adjusted continuous prices (Rollex)
+    kc_rx  = pd.read_parquet(DB / "arb_KC.parquet")["rollex_px"].rename("KC")
+    rc_rx  = pd.read_parquet(DB / "arb_RC.parquet")["rollex_px"].rename("RC")
+    cc_rx  = pd.read_parquet(DB / "arb_CC.parquet")["rollex_px"].rename("CC")
+    lcc_rx = pd.read_parquet(DB / "arb_LCC.parquet")["rollex_px"].rename("LCC")
+    gbp    = pd.read_parquet(DB / "fx_gbp.parquet")["GBP_USD"]
 
-kc_raw, rc_raw, cc_raw, lcc_raw, gbp_raw = load_all()
+    # Actual front-month prices (no roll adjustment) — optional, may not exist yet
+    front = {}
+    for name in ["KC", "RC", "CC", "LCC"]:
+        path = DB / f"front_{name}.parquet"
+        front[name] = pd.read_parquet(path) if path.exists() else None
+
+    return kc_rx, rc_rx, cc_rx, lcc_rx, gbp, front
+
+kc_rx, rc_rx, cc_rx, lcc_rx, gbp_raw, front = load_all()
+
+front_available = all(front[n] is not None for n in ["KC", "RC", "CC", "LCC"])
 
 # ── Analytics helpers ─────────────────────────────────────────────────────────
 
@@ -159,6 +169,20 @@ with st.sidebar:
     pair_key = "KCRC" if pair.startswith("KC") else "CCLCC"
 
     st.divider()
+    st.markdown("**Price source**")
+    _contract_opts = ["1st month (actual)", "2nd month (actual)", "Roll-adjusted (Rollex)"]
+    if not front_available:
+        st.caption("Front-month data not yet ingested — run ingest_front.py first.")
+        contract_choice = "Roll-adjusted (Rollex)"
+        st.radio("Contract", [contract_choice], index=0, disabled=True,
+                 label_visibility="collapsed")
+    else:
+        contract_choice = st.radio("Contract", _contract_opts, index=0,
+                                   label_visibility="collapsed")
+    use_col   = "px1" if "1st" in contract_choice else ("px2" if "2nd" in contract_choice else None)
+    use_rollex = use_col is None
+
+    st.divider()
     st.markdown("**Windows**")
     zscore_win  = st.slider("Z-score lookback (days)",  60, 504, 252, step=21)
     corr_win    = st.slider("Rolling correlation (days)", 30, 252, 60,  step=10)
@@ -171,19 +195,32 @@ with st.sidebar:
 
 # ── Build spread ──────────────────────────────────────────────────────────────
 
+def _pick(name: str) -> pd.Series:
+    """Return the correct price series for a commodity based on sidebar selection."""
+    if use_rollex:
+        mapping = {"KC": kc_rx, "RC": rc_rx, "CC": cc_rx, "LCC": lcc_rx}
+        return mapping[name]
+    return front[name][use_col].rename(name)
+
+src_tag = contract_choice.split("(")[0].strip()  # e.g. "1st month" or "Roll-adjusted"
+
 if pair_key == "KCRC":
-    kc_mt   = kc_raw * KC_FACTOR
-    spread  = (kc_mt - rc_raw).dropna()
+    kc_s    = _pick("KC")
+    rc_s    = _pick("RC")
+    kc_mt   = kc_s * KC_FACTOR
+    spread  = (kc_mt - rc_s).dropna()
     leg1_label, leg2_label = "KC ($/MT)", "RC ($/MT)"
     spread_label = "Arabica Premium over Robusta ($/MT)"
-    pair_title   = "KC / RC  —  Arabica vs Robusta"
+    pair_title   = f"KC / RC  —  Arabica vs Robusta  [{src_tag}]"
     has_fx       = False
 else:
-    lcc_usd = (lcc_raw * gbp_raw).dropna()
-    spread  = (cc_raw - lcc_usd).dropna()
+    cc_s    = _pick("CC")
+    lcc_s   = _pick("LCC")
+    lcc_usd = (lcc_s * gbp_raw).dropna()
+    spread  = (cc_s - lcc_usd).dropna()
     leg1_label, leg2_label = "CC ($/MT)", "LCC in USD ($/MT)"
     spread_label = "NY Premium over London Cocoa ($/MT)"
-    pair_title   = "CC / LCC  —  NY vs London Cocoa"
+    pair_title   = f"CC / LCC  —  NY vs London Cocoa  [{src_tag}]"
     has_fx       = True
 
 # ── Date range ────────────────────────────────────────────────────────────────
@@ -313,11 +350,11 @@ with st.expander("Section 1 — Spread Monitor", expanded=True):
 
     # — Individual legs —
     if pair_key == "KCRC":
-        l1 = (kc_raw * KC_FACTOR).loc[str(d_start):str(d_end)]
-        l2 = rc_raw.loc[str(d_start):str(d_end)]
+        l1 = (_pick("KC") * KC_FACTOR).loc[str(d_start):str(d_end)]
+        l2 = _pick("RC").loc[str(d_start):str(d_end)]
     else:
-        l1 = cc_raw.loc[str(d_start):str(d_end)]
-        l2 = (lcc_raw * gbp_raw).dropna().loc[str(d_start):str(d_end)]
+        l1 = _pick("CC").loc[str(d_start):str(d_end)]
+        l2 = (_pick("LCC") * gbp_raw).dropna().loc[str(d_start):str(d_end)]
 
     fig_legs = go.Figure()
     fig_legs.add_trace(go.Scatter(x=l1.index, y=l1, name=leg1_label,
@@ -339,8 +376,8 @@ with st.expander("Section 2 — FX Decomposition" if has_fx else "Section 2 — 
                    "divergence) and an FX component (GBP/USD move). Trade the price component; "
                    "be aware of the FX component.")
 
-        cc_al  = cc_raw.loc[str(d_start):str(d_end)]
-        lcc_al = lcc_raw.loc[str(d_start):str(d_end)]
+        cc_al  = _pick("CC").loc[str(d_start):str(d_end)]
+        lcc_al = _pick("LCC").loc[str(d_start):str(d_end)]
         gbp_al = gbp_raw.loc[str(d_start):str(d_end)]
 
         aligned = pd.concat([cc_al, lcc_al, gbp_al], axis=1).dropna()
