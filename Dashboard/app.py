@@ -585,4 +585,83 @@ with st.expander("Section 3 — Advanced Analytics", expanded=False):
     base_layout(fig_dist, title="Spread Distribution — where is today vs history")
     st.plotly_chart(fig_dist, use_container_width=True)
 
-st.caption("ICEBREAKER ARB  —  Data: Rollex parquets + ICE GBP/USD")
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 4 — Return Scatter
+# ══════════════════════════════════════════════════════════════════════════════
+
+with st.expander("Section 4 — Return Scatter", expanded=False):
+    st.caption("Daily price changes of each leg plotted against each other. "
+               "The slope shows how many $/MT one market moves per $/MT move in the other. "
+               "Recent days (last 60) are highlighted — divergence from the full-history "
+               "regression may signal a regime shift.")
+
+    # Build daily changes in $/MT for both legs over the selected date range
+    dl1 = l1.diff().dropna()
+    dl2 = l2.diff().dropna()
+    scat = pd.concat([dl1.rename("leg1"), dl2.rename("leg2")], axis=1).dropna()
+
+    if len(scat) < 10:
+        st.info("Not enough data in the selected date range.")
+    else:
+        # Regression line (full period)
+        from numpy.polynomial import polynomial as P
+        coeffs   = np.polyfit(scat["leg1"], scat["leg2"], 1)
+        slope, intercept = coeffs
+        x_line   = np.linspace(scat["leg1"].min(), scat["leg1"].max(), 200)
+        y_line   = slope * x_line + intercept
+        corr_val = scat["leg1"].corr(scat["leg2"])
+        r2       = corr_val ** 2
+
+        # Split recent vs history
+        cutoff   = 60
+        old_mask = scat.index < scat.index[-min(cutoff, len(scat))]
+        recent   = scat[~old_mask]
+        history  = scat[old_mask]
+
+        fig_scat = go.Figure()
+
+        # History dots
+        fig_scat.add_trace(go.Scatter(
+            x=history["leg1"], y=history["leg2"],
+            mode="markers", name="History",
+            marker=dict(color=MUTED, size=4, opacity=0.45),
+            hovertemplate=f"Δ{leg1_label}: %{{x:.1f}}<br>Δ{leg2_label}: %{{y:.1f}}<extra></extra>",
+        ))
+
+        # Recent dots
+        fig_scat.add_trace(go.Scatter(
+            x=recent["leg1"], y=recent["leg2"],
+            mode="markers", name=f"Last {min(cutoff, len(scat))}d",
+            marker=dict(color=TEAL, size=6, opacity=0.85,
+                        line=dict(color="white", width=0.5)),
+            hovertemplate=f"Δ{leg1_label}: %{{x:.1f}}<br>Δ{leg2_label}: %{{y:.1f}}<extra></extra>",
+        ))
+
+        # Regression line
+        fig_scat.add_trace(go.Scatter(
+            x=x_line, y=y_line, mode="lines", name="Regression",
+            line=dict(color=RED, width=1.5, dash="dash"),
+        ))
+
+        # Zero lines
+        fig_scat.add_hline(y=0, line_color=GRID, line_width=1)
+        fig_scat.add_vline(x=0, line_color=GRID, line_width=1)
+
+        base_layout(
+            fig_scat,
+            title=f"Daily Return Scatter  —  β={slope:.2f}  |  R²={r2:.2f}  |  ρ={corr_val:.2f}",
+            xaxis=dict(gridcolor=GRID, linecolor=GRID, tickfont=dict(color=MUTED),
+                       title=dict(text=f"Δ {leg1_label}", font=dict(color=MUTED, size=11))),
+            yaxis=dict(gridcolor=GRID, linecolor=GRID, tickfont=dict(color=MUTED),
+                       title=dict(text=f"Δ {leg2_label}", font=dict(color=MUTED, size=11))),
+        )
+        st.plotly_chart(fig_scat, use_container_width=True)
+
+        # Stats row
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Correlation (ρ)", f"{corr_val:.3f}")
+        c2.metric("R²", f"{r2:.3f}")
+        c3.metric("Beta (slope)", f"{slope:.3f}")
+        c4.metric("Intercept", f"{intercept:.2f}")
+
+st.caption("ICEBREAKER ARB  —  Data: ICE front-month + Rollex + GBP/USD")
