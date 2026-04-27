@@ -27,92 +27,64 @@ KC_FACTOR = 22.0462   # ¢/lbs  →  $/MT
 
 st.markdown("""
 <style>
-[data-testid="stAppViewContainer"] {
-    background:
-        radial-gradient(ellipse 70% 60% at 20% 80%, rgba(26,74,90,.50) 0%, transparent 65%),
-        radial-gradient(ellipse 60% 50% at 80% 20%, rgba(42,85,104,.45) 0%, transparent 60%),
-        radial-gradient(ellipse 80% 70% at 50% 30%, rgba(79,176,200,.10) 0%, transparent 55%),
-        #0D1620;
-    background-attachment: fixed;
-}
-[data-testid="stHeader"] {
-    background: rgba(13,22,32,.85) !important;
-    backdrop-filter: saturate(180%) blur(16px);
-    border-bottom: 1px solid rgba(188,212,222,.14);
-}
-[data-testid="stSidebar"] {
-    background: rgba(13,22,32,.92) !important;
-    border-right: 1px solid rgba(188,212,222,.10);
-}
-html, body, [class*="css"] { color: #d6e8ee; }
-h1, h2, h3 { color: #e8f4f8 !important; }
-p, label, span, div { color: #b8d4dc; }
-[data-testid="stExpander"] summary {
-    font-size: 13px; font-weight: 600; letter-spacing: .04em;
-    color: #bcd4de !important;
-    border-bottom: 1px solid rgba(188,212,222,.12);
-}
-hr { border-color: rgba(188,212,222,.12) !important; }
-[data-testid="stSlider"] label { color: #7fa8b8 !important; }
-
 /* KPI cards */
 .kpi-row { display:flex; gap:12px; margin-bottom:8px; }
 .kpi {
-    flex:1; background:rgba(13,28,42,.75);
-    border:1px solid rgba(188,212,222,.12);
-    border-top: 3px solid #4FB0C8;
+    flex:1; background:#ffffff;
+    border:1px solid #e5e7eb;
+    border-top: 3px solid #2563eb;
     border-radius:6px; padding:16px 18px 12px;
-    backdrop-filter:blur(8px);
 }
-.kpi.green  { border-top-color:#2dc6a0; }
-.kpi.red    { border-top-color:#e05c6a; }
-.kpi.amber  { border-top-color:#e0a84a; }
-.kpi.teal   { border-top-color:#4FB0C8; }
-.kpi.purple { border-top-color:#9b72cf; }
+.kpi.green  { border-top-color:#16a34a; }
+.kpi.red    { border-top-color:#dc2626; }
+.kpi.amber  { border-top-color:#d97706; }
+.kpi.teal   { border-top-color:#2563eb; }
+.kpi.purple { border-top-color:#7c3aed; }
 .kpi-label {
     font-size:10px; font-weight:700; letter-spacing:.1em;
-    text-transform:uppercase; color:#4d7a8a; margin-bottom:6px;
+    text-transform:uppercase; color:#6b7280; margin-bottom:6px;
 }
-.kpi-value { font-size:24px; font-weight:700; color:#e8f4f8; line-height:1; }
-.kpi-sub   { font-size:11px; color:#2e5a6a; margin-top:5px; }
+.kpi-value { font-size:24px; font-weight:700; color:#111827; line-height:1; }
+.kpi-sub   { font-size:11px; color:#9ca3af; margin-top:5px; }
 
 /* Section tag */
 .sec-tag {
     display:inline-block; font-size:10px; font-weight:700;
     letter-spacing:.12em; text-transform:uppercase;
-    color:#4d7a8a; border-bottom:1px solid rgba(188,212,222,.15);
+    color:#6b7280; border-bottom:1px solid #e5e7eb;
     padding-bottom:4px; margin-bottom:12px; width:100%;
 }
 /* Stat table */
 .stat-row { display:flex; justify-content:space-between;
-    border-bottom:1px solid rgba(188,212,222,.08);
+    border-bottom:1px solid #f3f4f6;
     padding:5px 0; font-size:12px; }
-.stat-key { color:#4d7a8a; }
-.stat-val { color:#e8f4f8; font-weight:600; }
+.stat-key { color:#6b7280; }
+.stat-val { color:#111827; font-weight:600; }
 </style>
 """, unsafe_allow_html=True)
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 
-PAPER  = "rgba(13,28,42,0.55)"
-PLOT   = "rgba(13,28,42,0)"
-GRID   = "rgba(188,212,222,0.07)"
-FONT   = "#d6e8ee"
-MUTED  = "#7fa8b8"
-TEAL   = "#4FB0C8"
-GREEN  = "#2dc6a0"
-RED    = "#e05c6a"
-AMBER  = "#e0a84a"
-PURPLE = "#9b72cf"
+PAPER  = "rgba(0,0,0,0)"
+PLOT   = "rgba(0,0,0,0)"
+GRID   = "rgba(0,0,0,0.06)"
+FONT   = "#374151"
+MUTED  = "#9ca3af"
+TEAL   = "#2563eb"
+GREEN  = "#16a34a"
+RED    = "#dc2626"
+AMBER  = "#d97706"
+PURPLE = "#7c3aed"
 
 def base_layout(fig, **kw):
-    ax = dict(gridcolor=GRID, linecolor=GRID, tickfont=dict(color=MUTED), zerolinecolor=GRID)
+    ax = dict(gridcolor=GRID, linecolor=GRID, tickfont=dict(color=MUTED),
+               zerolinecolor=GRID, zerolinewidth=1)
     xo = kw.pop("xaxis", {})
     yo = kw.pop("yaxis", {})
     fig.update_layout(
         paper_bgcolor=PAPER, plot_bgcolor=PLOT,
         font=dict(color=FONT, size=12),
-        title_font=dict(color="#e8f4f8", size=13),
+        title_font=dict(color="#111827", size=13),
         margin=dict(t=36, b=20, l=8, r=8),
         legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color=FONT)),
         xaxis={**ax, **xo}, yaxis={**ax, **yo},
@@ -258,8 +230,8 @@ last_cross = (spread.index[-1] - spread.index[crosses][-1]).days if crosses.any(
 
 # ── KPIs ──────────────────────────────────────────────────────────────────────
 
-z_color   = "red" if abs(cur_z) > z_entry else "green" if abs(cur_z) < z_exit else "amber"
-pct_color = "red" if cur_pct > 85 else "green" if cur_pct < 15 else "teal"
+z_color   = "red"   if abs(cur_z) > z_entry else "green" if abs(cur_z) < z_exit else "amber"
+pct_color = "red"   if cur_pct > 85        else "green" if cur_pct < 15       else "teal"
 
 st.markdown(f"""
 <div class="kpi-row">
@@ -509,8 +481,8 @@ with st.expander("Section 3 — Advanced Analytics", expanded=False):
         ]
         for k, v in rows2:
             color = ""
-            if v in ("Yes",): color = f"color:{GREEN};"
-            if v in ("No",):  color = f"color:{RED};"
+            if v == "Yes": color = f"color:{GREEN};"
+            if v == "No":  color = f"color:{RED};"
             st.markdown(f'<div class="stat-row"><span class="stat-key">{k}</span>'
                         f'<span class="stat-val" style="{color}">{v}</span></div>',
                         unsafe_allow_html=True)
