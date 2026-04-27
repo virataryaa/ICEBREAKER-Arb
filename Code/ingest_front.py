@@ -1,12 +1,18 @@
 """
 Arb — Front-Month Price Ingest
 ================================
-Fetches 1st and 2nd nearby contract prices from ICE Connect (no roll adjustment).
-Saves one parquet per commodity: front_KC.parquet, front_RC.parquet, etc.
+Fetches 1st and 2nd nearby back-adjusted continuation prices from ICE Connect.
+Symbols use the % prefix (%KC 1!, %RC 1!-ICE, etc.) which gives the full
+historical series stitched across roll dates (back-adjusted via Panama method).
+
+Note: KC 1! without % only returns today's price — history requires %.
+The back-adjustment means absolute spread levels are distorted over long
+horizons (different cumulative adjustments per leg), but z-scores within
+rolling windows are still valid for relative positioning.
 
 Each parquet has two columns:
-    px1  — 1st nearby (front month)
-    px2  — 2nd nearby
+    px1  — 1st nearby (front month, back-adjusted)
+    px2  — 2nd nearby (back-adjusted)
 
 Units match the raw ICE quote:
     KC  → ¢/lbs    (multiply by 22.0462 for $/MT)
@@ -41,10 +47,10 @@ OUT_DIR    = Path(__file__).parent.parent / "Database"
 FULL_START = "2014-01-01"
 
 SYMBOLS = {
-    "KC":  ("KC 1!",       "KC 2!"),
-    "RC":  ("RC 1!-ICE",   "RC 2!-ICE"),
-    "CC":  ("CC 1!",       "CC 2!"),
-    "LCC": ("LCC 1!-ICE",  "LCC 2!-ICE"),
+    "KC":  ("%KC 1!",      "%KC 2!"),
+    "RC":  ("%RC 1!-ICE",  "%RC 2!-ICE"),
+    "CC":  ("%CC 1!",      "%CC 2!"),
+    "LCC": ("%C 1!-ICE",   "%C 2!-ICE"),   # ICE EU London Cocoa root is C, not LCC
 }
 
 # ── Fetch ─────────────────────────────────────────────────────────────────────
