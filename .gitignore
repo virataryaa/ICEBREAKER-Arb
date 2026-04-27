@@ -1,0 +1,11 @@
+# Parquet data files — populated locally by ingest scripts
+Database/*.parquet
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Streamlit
+.streamlit/secrets.toml
