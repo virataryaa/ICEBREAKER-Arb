@@ -12,8 +12,6 @@ import plotly.graph_objects as go
 import streamlit as st
 from pathlib import Path
 from statsmodels.tsa.stattools import coint, adfuller
-from statsmodels.regression.linear_model import OLS
-from statsmodels.tools import add_constant
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -117,26 +115,41 @@ front_available = all(front[n] is not None for n in ["KC", "RC", "CC", "LCC"])
 
 # ── Analytics helpers ─────────────────────────────────────────────────────────
 
-def half_life(spread: pd.Series) -> float:
-    s = spread.dropna()
-    lag   = s.shift(1).dropna()
-    delta = s.diff().dropna()
-    lag, delta = lag.align(delta, join="inner")
-    X    = add_constant(lag)
-    beta = OLS(delta, X).fit().params.iloc[1]
+def _hl_numpy(arr: np.ndarray) -> float:
+    """Fast AR(1) half-life via pure numpy — no statsmodels overhead."""
+    if len(arr) < 4:
+        return np.nan
+    y    = np.diff(arr)
+    x    = arr[:-1]
+    x_dm = x - x.mean()
+    d    = np.dot(x_dm, x_dm)
+    if d == 0:
+        return np.nan
+    beta = np.dot(x_dm, y) / d
     if beta >= 0:
         return np.nan
     return -np.log(2) / np.log(1 + beta)
 
+def half_life(spread: pd.Series) -> float:
+    return _hl_numpy(spread.dropna().values)
+
+# raw=True passes a numpy array — much faster than raw=False (avoids Series overhead)
 def rolling_half_life(spread: pd.Series, window: int) -> pd.Series:
-    return spread.rolling(window).apply(lambda s: half_life(pd.Series(s)), raw=False)
+    return spread.rolling(window).apply(_hl_numpy, raw=True)
 
 def zscore(spread: pd.Series, window: int) -> pd.Series:
     mu  = spread.rolling(window).mean()
     sig = spread.rolling(window).std()
     return (spread - mu) / sig
 
-def rolling_coint_pval(s1: pd.Series, s2: pd.Series, window: int) -> pd.Series:
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_rolling_hl(vals: tuple, window: int) -> np.ndarray:
+    return rolling_half_life(pd.Series(vals), window).values
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_rolling_coint(v1: tuple, v2: tuple, idx: tuple, window: int):
+    s1 = pd.Series(v1, index=pd.DatetimeIndex(idx))
+    s2 = pd.Series(v2, index=pd.DatetimeIndex(idx))
     aligned = pd.concat([s1, s2], axis=1).dropna()
     vals = []
     for i in range(window, len(aligned) + 1):
@@ -146,14 +159,18 @@ def rolling_coint_pval(s1: pd.Series, s2: pd.Series, window: int) -> pd.Series:
         except Exception:
             pv = np.nan
         vals.append((aligned.index[i - 1], pv))
-    idx, data = zip(*vals)
-    return pd.Series(data, index=idx)
+    idx_out, data = zip(*vals)
+    return pd.Series(data, index=idx_out)
 
-def adf_pvalue(spread: pd.Series) -> float:
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_adf(vals: tuple) -> float:
     try:
-        return adfuller(spread.dropna())[1]
+        return adfuller(np.array(vals))[1]
     except Exception:
         return np.nan
+
+def adf_pvalue(spread: pd.Series) -> float:
+    return _cached_adf(tuple(spread.dropna().values))
 
 def percentile_rank(spread: pd.Series, window: int) -> pd.Series:
     def pct(arr):
@@ -476,12 +493,21 @@ with st.expander("Section 3 — Advanced Analytics", expanded=False):
                "and how quickly it tends to correct.")
 
     # ── Static stats panel ────────────────────────────────────────────────────
-    adf_p   = adf_pvalue(spread)
-    try:
-        _, coint_p, _ = coint(l1.reindex(spread.index).dropna(),
-                               l2.reindex(spread.index).dropna())
-    except Exception:
-        coint_p = np.nan
+    adf_p = adf_pvalue(spread)
+
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _static_coint(v1, v2):
+        try:
+            _, p, _ = coint(np.array(v1), np.array(v2))
+            return p
+        except Exception:
+            return np.nan
+
+    l1_al    = l1.reindex(spread.index).dropna()
+    l2_al    = l2.reindex(spread.index).dropna()
+    shared   = l1_al.index.intersection(l2_al.index)
+    coint_p  = _static_coint(tuple(l1_al.reindex(shared).values),
+                              tuple(l2_al.reindex(shared).values))
 
     spread_mean = spread.mean()
     spread_std  = spread.std()
@@ -527,11 +553,11 @@ with st.expander("Section 3 — Advanced Analytics", expanded=False):
     st.divider()
 
     # ── Rolling half-life ─────────────────────────────────────────────────────
-    with st.spinner("Computing rolling half-life..."):
-        rhl = rolling_half_life(spread, hl_win)
+    rhl_vals = _cached_rolling_hl(tuple(spread.values), hl_win)
+    rhl      = pd.Series(rhl_vals, index=spread.index)
 
     fig_hl = go.Figure()
-    fig_hl.add_trace(go.Scatter(x=rhl.index, y=rhl.clip(0, 365),
+    fig_hl.add_trace(go.Scatter(x=rhl.index, y=np.clip(rhl, 0, 365),
                                  line=dict(color=PURPLE, width=1.5), name="Half-life (days)"))
     fig_hl.add_hline(y=hl_val, line_color=MUTED, line_dash="dot", line_width=1,
                      annotation_text=f"Full-period: {hl_val:.0f}d" if not np.isnan(hl_val) else "",
@@ -545,24 +571,28 @@ with st.expander("Section 3 — Advanced Analytics", expanded=False):
                 "may be breaking down.")
     coint_win = st.slider("Cointegration window (days)", 60, 252, 120, step=20,
                            key="coint_win")
-    with st.spinner("Computing rolling cointegration..."):
-        rcoint = rolling_coint_pval(
-            l1.reindex(spread.index).dropna(),
-            l2.reindex(spread.index).dropna(),
+    st.caption("Slow computation (~10s) — cached after first run.")
+    if st.button("Run rolling cointegration", key="run_coint"):
+        l1_al = l1.reindex(spread.index).dropna()
+        l2_al = l2.reindex(spread.index).dropna()
+        shared_idx = l1_al.index.intersection(l2_al.index)
+        rcoint = _cached_rolling_coint(
+            tuple(l1_al.reindex(shared_idx).values),
+            tuple(l2_al.reindex(shared_idx).values),
+            tuple(shared_idx),
             coint_win,
         )
-
-    fig_co = go.Figure()
-    fig_co.add_hrect(y0=0, y1=0.05, fillcolor=GREEN, opacity=0.08, line_width=0)
-    fig_co.add_hrect(y0=0.05, y1=0.10, fillcolor=AMBER, opacity=0.06, line_width=0)
-    fig_co.add_trace(go.Scatter(x=rcoint.index, y=rcoint,
-                                 line=dict(color=TEAL, width=1.5), name="p-value"))
-    fig_co.add_hline(y=0.05, line_color=GREEN, line_dash="dot", line_width=1)
-    fig_co.add_hline(y=0.10, line_color=AMBER, line_dash="dot", line_width=1)
-    base_layout(fig_co, title=f"Rolling Cointegration p-value ({coint_win}d)",
-                yaxis=dict(gridcolor=GRID, linecolor=GRID,
-                           tickfont=dict(color=MUTED), range=[0, 1]))
-    st.plotly_chart(fig_co, use_container_width=True)
+        fig_co = go.Figure()
+        fig_co.add_hrect(y0=0, y1=0.05, fillcolor=GREEN, opacity=0.08, line_width=0)
+        fig_co.add_hrect(y0=0.05, y1=0.10, fillcolor=AMBER, opacity=0.06, line_width=0)
+        fig_co.add_trace(go.Scatter(x=rcoint.index, y=rcoint,
+                                     line=dict(color=TEAL, width=1.5), name="p-value"))
+        fig_co.add_hline(y=0.05, line_color=GREEN, line_dash="dot", line_width=1)
+        fig_co.add_hline(y=0.10, line_color=AMBER, line_dash="dot", line_width=1)
+        base_layout(fig_co, title=f"Rolling Cointegration p-value ({coint_win}d)",
+                    yaxis=dict(gridcolor=GRID, linecolor=GRID,
+                               tickfont=dict(color=MUTED), range=[0, 1]))
+        st.plotly_chart(fig_co, use_container_width=True)
 
     # ── Rolling correlation ───────────────────────────────────────────────────
     roll_corr_main = l1.rolling(corr_win).corr(l2)
